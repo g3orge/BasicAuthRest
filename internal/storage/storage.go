@@ -2,13 +2,18 @@ package storage
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
-	"os/user"
+	"time"
 
+	"github.com/dgrijalva/jwt-go"
+	us "github.com/g3orge/BasicAuthRest/internal/user"
+	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Storage struct {
@@ -32,7 +37,14 @@ func New() (*Storage, error) {
 	return &Storage{db: client.Database(databaseName).Collection(collectionName)}, nil
 }
 
-func (s *Storage) Create(ctx context.Context, user user.User) (string, error) {
+func (s *Storage) Create(ctx context.Context, user us.User) (string, error) {
+	filter := bson.M{"email": user.Email}
+
+	r := s.db.FindOne(ctx, filter)
+	if r.Err() == nil {
+		return "", fmt.Errorf("user already exsist")
+	}
+
 	res, err := s.db.InsertOne(ctx, user)
 	if err != nil {
 		return "", fmt.Errorf("failed when creating a user: %v", err)
@@ -46,21 +58,123 @@ func (s *Storage) Create(ctx context.Context, user user.User) (string, error) {
 	return "", fmt.Errorf("failed to convert oid to hex")
 }
 
-func (s *Storage) FindOne(ctx context.Context, id string) (user user.User, err error) {
-	oid, err := primitive.ObjectIDFromHex(id)
+func (s *Storage) GenerateTokens(ctx context.Context, guid string) (string, string, error) {
+	oid, err := primitive.ObjectIDFromHex(guid)
 	if err != nil {
-		return user, fmt.Errorf("failed to convers id to objectid: %v", err)
+		return "", "", fmt.Errorf("failed to convers id to objectid: %v", err)
 	}
 
 	filter := bson.M{"_id": oid}
-	result := s.db.FindOne(ctx, filter)
-	if result.Err() != nil {
-		return user, fmt.Errorf("failed to find one user by id: %s", id)
+
+	r := s.db.FindOne(ctx, filter)
+	if r.Err() != nil {
+		return "", "", fmt.Errorf("failed to find user")
 	}
 
-	if err = result.Decode(&user); err != nil {
-		return user, fmt.Errorf("failed to decode user: %v", err)
+	var user us.User
+
+	if err := r.Decode(&user); err != nil {
+		return "", "", fmt.Errorf("failed when decoding user")
 	}
 
-	return user, nil
+	secretKey := []byte(user.Email + user.Password)
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS512, jwt.MapClaims{
+		"exp": time.Now().Add(time.Hour * 1).Unix(),
+		"sub": user.ID,
+	})
+
+	at, err := token.SignedString(secretKey)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create jwt token: %v", err)
+	}
+
+	rand := uuid.New()
+	rtBase64 := base64.StdEncoding.EncodeToString([]byte(rand.String()))
+
+	hashedRT, err1 := createTokenHash(rtBase64)
+	if err1 != nil {
+		return "", "", fmt.Errorf("error in creating token hash: %v", err1)
+	}
+
+	fmt.Println(user.ID)
+	session := us.Session{
+		RefreshToken: hashedRT,
+		ExpAt:        time.Now().Add(time.Hour * 2),
+	}
+
+	_, err2 := s.db.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": bson.M{"session": session}})
+	if err2 != nil {
+		return "", "", fmt.Errorf("cannot insert refresh token: %v", err2)
+	}
+
+	return at, rtBase64, nil
+}
+
+func (s *Storage) RefreshToken(ctx context.Context, rt string, guid string) (string, string, error) {
+	oid, err := primitive.ObjectIDFromHex(guid)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to convers id to objectid: %v", err)
+	}
+
+	filter := bson.M{"_id": oid}
+
+	r := s.db.FindOne(ctx, filter)
+	if r.Err() != nil {
+		return "", "", fmt.Errorf("failed to find user")
+	}
+
+	var user us.User
+
+	if err := r.Decode(&user); err != nil {
+		return "", "", fmt.Errorf("failed when decoding user")
+	}
+
+	if err = checkTokenHash(rt, user.Session.RefreshToken); err != nil {
+		return "", "", fmt.Errorf("refreshedToken does not match: %v", err)
+	}
+
+	rand := uuid.New()
+	rtBase64 := base64.StdEncoding.EncodeToString([]byte(rand.String()))
+
+	hashedRT, err1 := createTokenHash(rtBase64)
+	if err1 != nil {
+		return "", "", fmt.Errorf("error in creating token hash: %v", err1)
+	}
+
+	session := us.Session{
+		RefreshToken: hashedRT,
+		ExpAt:        time.Now().Add(time.Hour * 2),
+	}
+
+	_, err2 := s.db.UpdateOne(ctx, bson.M{"_id": user.ID}, bson.M{"$set": bson.M{"session": session}})
+	if err2 != nil {
+		return "", "", fmt.Errorf("cannot insert refresh token: %v", err2)
+	}
+
+	secretKey := []byte(user.Email + user.Password)
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS512, jwt.MapClaims{
+		"exp": time.Now().Add(time.Hour * 1).Unix(),
+		"sub": user.ID,
+	})
+
+	at, err3 := token.SignedString(secretKey)
+	if err3 != nil {
+		return "", "", fmt.Errorf("failed to create jwt token: %v", err3)
+	}
+
+	return at, rt, nil
+}
+
+func checkTokenHash(refreshToken, hash string) error {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(refreshToken))
+
+	return err
+}
+
+func createTokenHash(rt string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(rt), 12)
+
+	return string(bytes), err
 }

@@ -20,9 +20,12 @@ func main() {
 	}
 
 	_ = storage
+
 	r := mux.NewRouter()
 
-	r.HandleFunc("/login/{guid}", handlers.LoginHandler)
+	r.HandleFunc("/login/{guid}", handlers.CreateTokens(storage)).Methods("GET")
+	r.HandleFunc("/refresh/{guid}/{refresh}", handlers.RefreshToken(storage)).Methods("GET")
+	r.HandleFunc("/", handlers.CreateUser(storage)).Methods("POST")
 
 	http.ListenAndServe(":8080", r)
 }
