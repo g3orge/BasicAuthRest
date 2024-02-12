@@ -22,11 +22,6 @@ type AuthTokenResponse struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-func LoginHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	log.Println(vars)
-}
-
 func CreateUser(s Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)

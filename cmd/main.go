@@ -13,19 +13,16 @@ import (
 func main() {
 	cfg := config.MustLoad()
 
-	_ = cfg
-	storage, err := storage.New()
+	storage, err := storage.New(cfg.Db.DbPath, cfg.Db.DbName, cfg.Db.CollName)
 	if err != nil {
 		log.Fatalf("failed to init storage: %v", err)
 	}
 
-	_ = storage
-
 	r := mux.NewRouter()
-
-	r.HandleFunc("/login/{guid}", handlers.CreateTokens(storage)).Methods("GET")
-	r.HandleFunc("/refresh/{guid}/{refresh}", handlers.RefreshToken(storage)).Methods("GET")
-	r.HandleFunc("/", handlers.CreateUser(storage)).Methods("POST")
+	// user struct in user.go
+	r.HandleFunc("/login/{guid}", handlers.CreateTokens(storage)).Methods("GET")             //generate access and refresh token, hash refreshT and save to db
+	r.HandleFunc("/refresh/{guid}/{refresh}", handlers.RefreshToken(storage)).Methods("GET") //regenerete refresh and access tokens and save hashedRt to db
+	r.HandleFunc("/", handlers.CreateUser(storage)).Methods("POST")                          //send user to database
 
 	http.ListenAndServe(":8080", r)
 }

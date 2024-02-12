@@ -20,11 +20,7 @@ type Storage struct {
 	db *mongo.Collection
 }
 
-func New() (*Storage, error) {
-	url := "mongodb://localhost:27017"
-	databaseName := "bAuth"
-	collectionName := "simpleAuth"
-
+func New(url, databaseName, collectionName string) (*Storage, error) {
 	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(url))
 	if err != nil {
 		return nil, fmt.Errorf("cannot connect to database: %v", err)
@@ -147,7 +143,8 @@ func (s *Storage) RefreshToken(ctx context.Context, rt string, guid string) (str
 		ExpAt:        time.Now().Add(time.Hour * 2),
 	}
 
-	_, err2 := s.db.UpdateOne(ctx, bson.M{"_id": user.ID}, bson.M{"$set": bson.M{"session": session}})
+	_, err2 := s.db.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": bson.M{"session": session}})
+
 	if err2 != nil {
 		return "", "", fmt.Errorf("cannot insert refresh token: %v", err2)
 	}
@@ -164,7 +161,7 @@ func (s *Storage) RefreshToken(ctx context.Context, rt string, guid string) (str
 		return "", "", fmt.Errorf("failed to create jwt token: %v", err3)
 	}
 
-	return at, rt, nil
+	return at, rtBase64, nil
 }
 
 func checkTokenHash(refreshToken, hash string) error {

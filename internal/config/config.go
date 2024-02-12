@@ -9,7 +9,14 @@ import (
 
 type Config struct {
 	Env        string `yaml:"env"`
+	Db         Db     `yaml:"db"`
 	HTTPServer `yaml:"http_server"`
+}
+
+type Db struct {
+	DbPath   string `yaml:"dbpath"`
+	DbName   string `yaml:"dbname"`
+	CollName string `yaml:"collectionname"`
 }
 
 type HTTPServer struct {
